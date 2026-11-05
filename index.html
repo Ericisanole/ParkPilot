@@ -216,12 +216,13 @@ function mountParkMap(){
  if(tab!=='map'||!byId('parkMap'))return;
  if(parkMap){parkMap.remove();parkMap=null;}
  if(!window.L){byId('parkMap').innerHTML='<p class="map-fallback">The interactive map could not load. Starting-point selectors and external walking directions are still available when location data has loaded.</p>';return;}
+ byId('parkMap').replaceChildren();
  const center=PARK_CENTERS[state.park];parkMap=L.map('parkMap',{scrollWheelZoom:false}).setView(center,16);
  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(parkMap);
  const destination=mapPlaces().find(p=>p.id===mapDestination);
  for(const p of mapPlaces()){
   const selected=p.id===mapDestination;
-  const marker=L.circleMarker(placeCoordinates(p),{radius:selected?9:5,color:selected?'#ffd35a':'#2155e8',fillColor:selected?'#ffd35a':'#2155e8',fillOpacity:.8}).addTo(parkMap);
+  const marker=L.circleMarker(placeCoordinates(p),{bubblingMouseEvents:false,radius:selected?9:5,color:selected?'#ffd35a':'#2155e8',fillColor:selected?'#ffd35a':'#2155e8',fillOpacity:.8}).addTo(parkMap);
   marker.bindPopup(`<strong>${ESC(p.name)}</strong><p><button onclick='mapDestination=${safeId(p.id)};render()'>Directions here</button></p>`);
  }
  if(mapOrigin){L.circleMarker(mapOrigin.coords,{radius:10,color:'#fff',weight:3,fillColor:'#2155e8',fillOpacity:1}).addTo(parkMap).bindPopup(ESC(mapOrigin.label));if(mapOrigin.mode==='device'&&mapOrigin.accuracy<3000)L.circle(mapOrigin.coords,{radius:mapOrigin.accuracy,color:'#2155e8',weight:1,fillOpacity:.08}).addTo(parkMap);}
