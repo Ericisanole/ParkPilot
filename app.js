@@ -1,0 +1,290 @@
+
+'use strict';
+const ICONS = {
+  "castle": "M3 21V9l3-4 3 4v4h2V6l3-4 3 4v7h2V9l2-3 2 3v12H3Zm8 0v-4h4v4",
+  "home": "m3 10 9-7 9 7v10H3Zm6 10v-6h6v6",
+  "coaster": "M2 20h20M4 20v-5m4 5v-9m4 9V8m4 12V9m4 11v-7M2 17l8-8q4-5 8 0l4 5M6 9l3-3",
+  "list": "M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1",
+  "people": "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-4M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm8-8a4 4 0 0 1 0 8",
+  "settings": "m10 3-1 3-3 1-3 3 2 2-1 3 2 3 3-1 2 4h3l1-3 3-1 3-3-2-2 1-3-2-3-3 1-2-4Zm2 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6",
+  "pin": "M20 10c0 6-8 11-8 11s-8-5-8-11a8 8 0 1 1 16 0Zm-8 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6",
+  "clock": "M12 7v5l3 2m7-2a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z",
+  "calendar": "M3 5h18v16H3Zm0 5h18M8 3v4m8-4v4m-7 9 2 2 4-4",
+  "star": "M12 2c1 6 4 9 10 10-6 1-9 4-10 10-1-6-4-9-10-10 6-1 9-4 10-10Z",
+  "next": "m9 5 7 7-7 7"
+};
+const icon = name => `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
+const STORE='parkpilot_family_v1',API='https://api.themeparks.wiki/v1';
+const PARKS=[{key:'mk',name:'Magic Kingdom',match:'magic kingdom',id:'75ea578a-adc8-4116-a54d-dccb60765ef9',short:'Kingdom'},{key:'ep',name:'EPCOT',match:'epcot',id:null,short:'EPCOT'},{key:'hs',name:'Hollywood Studios',match:'hollywood studios',id:null,short:'Studios'},{key:'ak',name:'Animal Kingdom',match:'animal kingdom',id:null,short:'Animal'},{key:'dl',name:'Disneyland Park',match:'disneyland park',id:null,short:'Disneyland'},{key:'ca',name:'Disney California Adventure',match:'disney california adventure',id:null,short:'California Adventure'}];
+const DEFAULT={park:'mk',people:[{name:'Adult 1',height:70,selected:true},{name:'Adult 2',height:65,selected:true},{name:'Child 1',height:44,selected:true},{name:'Child 2',height:34,selected:true}],favorites:[],done:[],plan:[],notes:'',maxWait:45,showUnknown:true,showClosed:false,sort:'wait',filter:'all'};
+let saved={};try{saved=JSON.parse(localStorage.getItem(STORE)||'{}')||{}}catch{}let state={...DEFAULT,...saved},tab='today',live=[],lastFetch=null,err='',loading=false,search='',parkIds={},dataPark='',lastSyncByPark={},notice='';
+const ESC=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const byId=id=>document.getElementById(id);const save=()=>{try{localStorage.setItem(STORE,JSON.stringify(state))}catch(e){notify('Storage unavailable: export your backup')}};
+const change=(key,value)=>{state[key]=value;save();render();if(key==='park'){resetMapLocation();getLive()}};
+const doSet=(type,id)=>{let list=state[type]||[];state[type]=list.includes(id)?list.filter(x=>x!==id):[...list,id];save();render()};
+const safeId=id=>ESC(JSON.stringify(String(id)));
+function notify(s){let el=byId('toast');el.textContent=s;el.classList.remove('hidden');clearTimeout(notify.timer);notify.timer=setTimeout(()=>el.classList.add('hidden'),2500)}
+function go(t,recordHistory=true){
+  if(t==='explore')t=exploreTab;
+  if(['rides','dining'].includes(t))exploreTab=t;
+  const changed=t!==tab;
+  if(changed)tabScroll[tab]=window.scrollY;
+  tab=t;
+  if(changed&&recordHistory)history.pushState({parkpilotTab:t},'','#'+t);
+  updateNavigation();
+  render();
+  window.scrollTo({top:tabScroll[t]||0,behavior:'instant'});
+  if(changed)animateNavigation();
+  if(['today','rides','dining','charts','map'].includes(t))getLive();
+}
+const hours=d=>d?new Date(d).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'—';
+// Minimum rider heights in inches for select rides; check official rules onsite. Unknowns are never assumed safe.
+const HEIGHTS=[['seven dwarfs mine train',38],['big thunder mountain',40],['space mountain',44],['tron lightcycle',48],['tiana',40],['barnstormer',35],['tomorrowland speedway',32],['goofy',35],['slinky dog dash',38],['rise of the resistance',40],['millennium falcon',38],['tower of terror',40],['rock n roller',48],['star tours',40],['alien swirling saucers',32],['test track',40],['guardians of the galaxy',42],['mission space',40],['soarin',40],['frozen ever after',0],['remy',0],['expedition everest',44],['avatar flight of passage',44],['na vi river journey',0],['kali river rapids',38],['dinosaur',40],['kilimanjaro safaris',0],['pirates of the caribbean',0],['haunted mansion',0],['jungle cruise',0],['its a small world',0],['peter pans flight',0],['under the sea',0],['buzz lightyear',0]];
+const normalize=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[’']/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+function heightFor(n){const norm=normalize(n);let item=HEIGHTS.find(([s])=>norm.includes(s));return item?item[1]:null}
+function typeFor(n,raw){let t=normalize(n);if(/coaster|mountain|everest|tron|slinky|barnstormer|guardians|rock n roller|mine train/.test(t))return 'Thrill';if(/railroad|train|transport|monorail|ferry|peoplemover/.test(t))return 'Transport';if(/show|theater|theatre|hall|philharmagic|festival|musical|encanto|carousel of progress/.test(t)||raw.entityType==='SHOW')return 'Show';return 'Ride'}
+function makeRide(r){let q=r.queue?.STANDBY;let wait=typeof q?.waitTime==='number'?q.waitTime:null;return {id:r.id,name:r.name||'Unnamed attraction',status:r.status||'UNKNOWN',wait,height:['dl','ca'].includes(state.park)?null:heightFor(r.name),type:typeFor(r.name,r),updated:r.lastUpdated,land:r.land?.name||(typeof r.land==='string'?r.land:'')}}
+async function getLive(force=false){let key=state.park;if(loading)return;if(!force&&dataPark===key&&Date.now()-(lastSyncByPark[key]||0)<65000)return;loading=true;err='';render();try{let park=PARKS.find(p=>p.key===key);let id=parkIds[key]||park.id;
+if(!id){let resp=await fetch(API+'/destinations');if(!resp.ok)throw Error('Park directory unavailable');let json=await resp.json();let dests=Array.isArray(json)?json:(json.destinations||[]);let target=dests.find(d=>normalize(d.name).includes(['dl','ca'].includes(key)?'disneyland resort':'walt disney world'));if(!target)throw Error('Resort directory unavailable');
+let parks=target?.parks||[];if(!parks.length){let resp2=await fetch(API+'/entity/'+target.id+'/children');if(!resp2.ok)throw Error('Park list unavailable');let sub=await resp2.json();parks=sub.children||[]}
+PARKS.filter(p=>['dl','ca'].includes(p.key)===['dl','ca'].includes(key)).forEach(p=>{let match=parks.find(k=>normalize(k.name).includes(p.match));if(match)parkIds[p.key]=match.id});id=parkIds[key];if(!id)throw Error('Could not match this park in the directory')}
+let res=await fetch(`${API}/entity/${encodeURIComponent(id)}/live`);if(!res.ok)throw Error(`Wait-time service returned ${res.status}`);let payload=await res.json();if(!Array.isArray(payload.liveData))throw Error('Invalid wait-time response');diningLive[key]=payload.liveData.filter(x=>x.entityType==='RESTAURANT');live=payload.liveData.filter(x=>x.entityType!=='RESTAURANT').map(makeRide);recordSnapshot(key,live);loadDining(key,id);dataPark=key;lastFetch=new Date();lastSyncByPark[key]=Date.now();if(!live.length)notice='The API returned no attractions for this park';else notice='';}catch(e){err=e.message||'Unable to load live data';if(dataPark!==key)live=[];}finally{loading=false;render();if(state.park!==key)getLive()}}
+function filtered(){let q=normalize(search),people=state.people.filter(p=>p.selected),availableHeights=people.map(p=>Number(p.height)||0);let arr=(dataPark===state.park?live:[]).filter(r=>!q||normalize(r.name).includes(q)).filter(r=>state.filter==='all'||(state.filter==='favorites'?state.favorites.includes(r.id):state.filter==='eligible'?eligible(r,availableHeights):r.type===state.filter)).filter(r=>state.showClosed||r.status==='OPERATING').filter(r=>state.showUnknown||r.height!==null);
+return arr.sort((a,b)=>state.sort==='name'?a.name.localeCompare(b.name):state.sort==='height'?(a.height??999)-(b.height??999):state.sort==='favorites'?Number(state.favorites.includes(b.id))-Number(state.favorites.includes(a.id)): (a.wait??9999)-(b.wait??9999))}
+function eligible(r,heights){return r.height!==null&&heights.length>0&&heights.every(h=>h>=r.height)}
+function grade(r){if(r.status!=='OPERATING')return ['Unavailable','bad'];if(r.wait===null)return ['No posted wait',''];if(r.wait<=20)return ['Short wait','good'];if(r.wait<=state.maxWait)return ['Within target','good'];return ['Long wait','warn']}
+function rideCard(r){let g=grade(r),sel=state.people.filter(p=>p.selected),fit=r.height===null?'Height unverified':r.height===0?'No minimum height listed':`${r.height}″ minimum`;let some=sel.filter(p=>r.height!==null&&Number(p.height)>=r.height).map(p=>p.name),all=sel.length>0&&some.length===sel.length;return `<article class="ride">${photoBlock(r.id,r.name)}<div class="rideTop"><div><h3><button class="card-title" onclick='openDetails(${safeId(r.id)},"ride")'>${ESC(r.name)}${icon('next')}</button></h3><div class="tiny muted">${ESC(PARKS.find(p=>p.key===dataPark)?.name)}${r.land?' · '+ESC(r.land):''}</div><div><span class="tag">${ESC(r.type)}</span><span class="tag">${ESC(fit)}</span></div></div><div class="wait">${r.wait===null?'—':r.wait+' min'}<small>${r.status==='OPERATING'?'Operating':ESC(r.status.toLowerCase().replaceAll('_',' '))}</small></div></div><div class="row wrap"><span class="tag ${g[1]}">${g[0]}</span><span class="tag ${r.height===null?'warn':all?'good':'warn'}">${r.height===null?'Verify eligibility':all?'All selected eligible':some.length?ESC(some.join(', '))+' eligible':'Not all eligible'}</span></div><div class="rideFoot"><span class="muted tiny">${r.updated?'Updated '+hours(r.updated):'No update time'}</span><div class="row"><button class="miniBtn ${state.favorites.includes(r.id)?'on':''}" onclick='doSet("favorites",${safeId(r.id)})'>${state.favorites.includes(r.id)?'★':'☆'} Save</button><button class="miniBtn" onclick='doSet("plan",${safeId(r.id)})'>${state.plan.includes(r.id)?'✓ Planned':'+ Plan'}</button></div></div></article>`}
+const parkSelect=()=>`<div class="park">${icon('pin')}<select class="field" aria-label="Choose Disney park" onchange="change('park',this.value)">${PARKS.map(p=>`<option value="${p.key}" ${state.park===p.key?'selected':''}>${p.name}</option>`).join('')}</select></div>`;
+function summary(){
+  const operating=live.filter(r=>r.status==='OPERATING');
+  const numeric=operating.filter(r=>r.wait!==null);
+  const average=numeric.length?Math.round(numeric.reduce((sum,r)=>sum+r.wait,0)/numeric.length):null;
+  const metric=(symbol,value,label)=>`<div class="stat">${icon(symbol)}<b>${value===null?'<span aria-label="Unavailable">—</span>':value}</b><span>${label}</span></div>`;
+  const current=dataPark===state.park;
+  return `<div class="statgrid">${metric('coaster',current?operating.length:null,'Operating rides')}${metric('clock',current&&average!==null?`${average} <small>min</small>`:null,'Average wait')}${metric('calendar',state.plan.length,'My Plan')}</div>`;
+}
+function bestRide(){return (dataPark===state.park?live:[]).filter(r=>r.status==='OPERATING'&&r.wait!==null&&r.wait<=state.maxWait&&eligible(r,state.people.filter(p=>p.selected).map(p=>Number(p.height)||0))).filter(r=>!state.done.includes(r.id)).sort((a,b)=>Number(state.favorites.includes(b.id))*-20+ b.wait - (Number(state.favorites.includes(a.id))*-20 + a.wait))[0]}
+function status(){return `<div class="statusline tiny muted" role="status">${loading?'Updating live waits…':err?'Live data unavailable: '+ESC(err):dataPark===state.park&&lastFetch?'Live board fetched '+hours(lastFetch):'Live wait times not loaded'} ${!loading?'<button class="miniBtn" onclick="getLive(true)">↻ Refresh</button>':''}</div>${loading?'<div class="skeleton" aria-hidden="true"></div>':''}${err?'<div class="note">The app does not invent wait times. Check your connection and refresh. Saved preferences and plans remain on this device.</div>':''}`}
+function viewToday(){
+  const ride=bestRide();
+  return `<section class="hero"><div><span class="eyebrow">${ESC(activePark().name)} · Your day awaits</span><h1>Make every park minute count.</h1></div></section>
+  ${parkSelect()}<div class="day-context"><span>${state.people.filter(p=>p.selected).length} selected riders</span><strong>${state.plan.length} planned adventures</strong></div>${summary()}${status()}
+  <div class="sectionhead"><h2>${icon('star')}Best move right now</h2></div>
+  ${ride?`<article class="recommendation"><div class="thumb">${icon(ride.type==='Show'?'star':'coaster')}</div><div>
+    <h3><button class="rec-link" onclick='openDetails(${safeId(ride.id)})'>${ESC(ride.name)}${icon('next')}</button></h3>
+    <span class="tag good">${ride.wait} min posted wait</span>
+    <p>All selected riders meet the listed minimum.${state.favorites.includes(ride.id)?' A saved favorite.':''}</p>
+    <button class="miniBtn" onclick='doSet("plan",${safeId(ride.id)})'>${state.plan.includes(ride.id)?'Remove from plan':'+ Add to My Plan'}</button>
+  </div></article>`:`<div class="recommendation"><div class="thumb">${icon('star')}</div><div><h3>No verified match yet</h3><p>${loading?'Checking posted waits and rider heights…':err?'Live data is unavailable. Refresh to try again.':'A recommendation needs a posted wait within your target and a verified height match.'}</p></div></div>`}
+  <div class="sectionhead"><h2>Make it your day</h2></div><div class="row wrap"><button class="btn" onclick="go('rides')">Browse waits →</button><button class="btn" onclick="go('map')">Park map →</button><button class="btn" onclick="go('dining')">Find dining →</button><button class="btn" onclick="go('plan')">Open itinerary →</button></div><div class="sectionhead"><h2>Family snapshot</h2></div><div class="panel">${state.people.map(p=>`<div class="row between" style="padding:6px 0"><strong>${ESC(p.name)}</strong><span class="muted">${ESC(p.height)}″ ${p.selected?'· Selected':''}</span></div>`).join('')}</div>`}
+function showRide(name){
+  search=name;
+  go('rides');
+  byId('q').focus();
+}
+let advancedOpen=false;
+function viewRides(){let rides=filtered();return `<div class="sectionhead" style="margin-top:5px"><h2>Live attraction board</h2><span id="resultCount" class="tiny muted">${rides.length} results</span></div>${parkSelect()}${status()}<label for="q">Find a ride</label><input id="q" class="field" placeholder="Search attractions…" value="${ESC(search)}" oninput="search=this.value;renderRidesOnly()"><div class="sectionhead"><h2>Filters</h2></div><div class="chips">${['all','eligible','favorites','Ride','Thrill','Show','Transport'].map(f=>`<button class="chip ${state.filter===f?'active':''}" aria-pressed="${state.filter===f}" onclick="change('filter',${ESC(JSON.stringify(f))})">${f==='eligible'?'Everyone eligible':f==='all'?'All attractions':ESC(f)}</button>`).join('')}</div><details class="advanced" ${advancedOpen?'open':''} ontoggle="advancedOpen=this.open"><summary>Advanced filters</summary><div class="controls"><div><label for="rideSort">Sort by</label><select id="rideSort" class="field" onchange="change('sort',this.value)">${[['wait','Shortest wait'],['name','A to Z'],['height','Height requirement'],['favorites','Favorites first']].map(([v,n])=>`<option value="${v}" ${state.sort===v?'selected':''}>${n}</option>`).join('')}</select></div><div><label for="maxWait">Maximum comfortable wait</label><select id="maxWait" class="field" onchange="change('maxWait',Number(this.value))">${[15,20,30,45,60,90,120].map(v=>`<option value="${v}" ${state.maxWait===v?'selected':''}>${v} min</option>`).join('')}</select></div></div><div class="panel" style="margin-top:12px"><div class="toggle"><span>Include rides with unknown height rules</span><input aria-label="Include rides with unknown height rules" type="checkbox" ${state.showUnknown?'checked':''} onchange="change('showUnknown',this.checked)"></div><div class="toggle"><span>Include closed / unavailable rides</span><input aria-label="Include closed or unavailable rides" type="checkbox" ${state.showClosed?'checked':''} onchange="change('showClosed',this.checked)"></div></div></details><div id="rideResults">${rides.length?`<div class="rides">${rides.map(rideCard).join('')}</div>`:`<div class="empty">${loading?'Loading wait-time board…':dataPark!==state.park?'Choose Refresh to fetch this park':'No matching attractions. Try another filter or enable unavailable rides.'}</div>`}</div><p class="foot">Height rules are a small, locally maintained reference list, not an official accessibility determination. Unknown requirements are marked as unverified. Consult Disney's published requirements and Cast Members.</p>`}
+function renderRidesOnly(){let el=byId('rideResults');if(el){let rides=filtered();byId('resultCount').textContent=rides.length+' results';el.innerHTML=rides.length?`<div class="rides">${rides.map(rideCard).join('')}</div>`:'<div class="empty">No matching attractions.</div>'}}
+function viewPlan(){let rides=state.plan.map(id=>live.find(r=>r.id===id));return `<div class="sectionhead"><h2>My park plan</h2><span class="muted tiny">${state.plan.length} attractions</span></div>${parkSelect()}<div class="note">This itinerary is saved on your device. Attractions from another park may appear without current names after switching parks; saved items remain in your plan.</div><div class="sectionhead"><h2>Saved attractions</h2></div><div class="panel">${state.plan.length?state.plan.map((id,i)=>{let r=rides[i];return `<div class="planrow"><div><strong>${i+1}. ${r?ESC(r.name):'Saved ride from another park'}</strong><div class="muted tiny">${r?r.wait===null?'No wait available':r.wait+' min posted wait':'ID: '+ESC(id.slice(0,8))}</div></div><div class="row"><button class="miniBtn ${state.done.includes(id)?'on':''}" onclick='doSet("done",${safeId(id)})'>${state.done.includes(id)?'✓ Done':'Mark done'}</button><button class="miniBtn" onclick='doSet("plan",${safeId(id)})'>×</button></div></div>`}).join(''):'<div class="empty">Your itinerary is empty. Add rides from the Rides tab.</div>'}</div><div class="sectionhead"><h2>Notes & reservations</h2></div><div class="panel"><label for="notes">Keep dining times, Lightning Lane times, breaks, or travel notes</label><textarea id="notes" class="field" rows="7" placeholder="12:00 lunch · 2:30 Lightning Lane · 4:00 snack break…" oninput="state.notes=this.value;save()">${ESC(state.notes)}</textarea></div><button class="btn wide" onclick="exportPlan()">Copy itinerary</button>`}
+function personRow(p,i){return `<article class="profile"><div class="person"><div><label for="rider-${i}">Rider name</label><input id="rider-${i}" class="field" value="${ESC(p.name)}" onchange="personChange(${i},'name',this.value)"></div><div><label for="height-${i}">Height (in)</label><input id="height-${i}" class="field" type="number" min="0" max="96" step="0.5" value="${ESC(p.height)}" onchange="personChange(${i},'height',Number(this.value))"></div><button class="delete" title="Remove rider" onclick="removePerson(${i})">×</button></div><div class="toggle"><span class="tiny muted">Include ${ESC(p.name)} in all-family eligibility?</span><input aria-label="Include rider in family eligibility" type="checkbox" ${p.selected?'checked':''} onchange="personChange(${i},'selected',this.checked)"></div></article>`}
+function personChange(i,k,v){state.people[i][k]=v;save();render()}
+function removePerson(i){if(state.people.length<=1)return notify('Keep at least one rider');state.people.splice(i,1);save();render()}
+function addPerson(){state.people.push({name:'Rider '+(state.people.length+1),height:40,selected:true});save();render()}
+function viewFamily(){return `<div class="sectionhead"><h2>Family & ride heights</h2></div><div class="panel"><p class="muted">Use actual measured heights. Only selected riders are checked for the “Everyone eligible” filter and ride suggestions.</p><div class="profiles">${state.people.map(personRow).join('')}</div><button class="btn primary wide" onclick="addPerson()">+ Add a family member</button></div><div class="note">Height restrictions can change, and some rides have other safety/accessibility requirements. Always verify eligibility with the park.</div>`}
+function exportBackup(){let b=new Blob([JSON.stringify({app:'ParkPilot',version:1,exportedAt:new Date().toISOString(),preferences:state},null,2)],{type:'application/json'});let url=URL.createObjectURL(b);let a=document.createElement('a');a.href=url;a.download='parkpilot-backup-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);notify('Backup ready to save')}
+async function restoreFile(e){let f=e.target.files?.[0];if(!f)return;try{let payload=JSON.parse(await f.text());let s=payload.preferences;if(payload.app!=='ParkPilot'||!s||!Array.isArray(s.people)||!Array.isArray(s.plan)||!Array.isArray(s.favorites))throw Error('Invalid ParkPilot backup');if(!confirm('Replace current local preferences and plan with this backup?'))return;state={...DEFAULT,...s};save();render();notify('Backup restored')}catch(ex){notify('Unable to import: '+ex.message)}finally{e.target.value=''}}
+async function exportPlan(){let txt=[`ParkPilot · ${PARKS.find(p=>p.key===state.park).name}`,`Saved attractions:`,...state.plan.map((id,i)=>`${i+1}. ${live.find(r=>r.id===id)?.name||'Ride ID '+id}${state.done.includes(id)?' ✓':''}`),'',`Notes: ${state.notes||'None'}`].join('\n');try{await navigator.clipboard.writeText(txt);notify('Itinerary copied')}catch{let b=new Blob([txt],{type:'text/plain'}),a=document.createElement('a'),u=URL.createObjectURL(b);a.href=u;a.download='parkpilot-itinerary.txt';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}}
+function clearData(){if(confirm('Delete ALL ParkPilot preferences, family profiles and plans stored in this browser?')){state=structuredClone(DEFAULT);save();render();notify('Local data reset')}}
+function viewSettings(){return `<div class="sectionhead"><h2>Settings & privacy</h2></div><div class="panel"><h3>Offline-first preferences</h3><p class="muted">Family heights, favorites, plans, checkmarks and notes are stored in this browser's local storage. No account, sign-in or cloud database required.</p><button class="btn primary wide" onclick="exportBackup()">↓ Export JSON backup</button><div style="height:10px"></div><button class="btn wide" onclick="byId('restoreFile').click()">↑ Import JSON backup</button></div><div class="panel"><h3>Live wait-time feed</h3><p class="muted">ParkPilot retrieves real-time posted ride waits from ThemeParks.wiki when connected. No API key is required. Refresh is manual or on entering a park tab (no more than once per minute).</p><a class="smallLink" href="https://www.themeparks.wiki/api" target="_blank" rel="noopener">Powered by ThemeParks.wiki</a><div class="divider"></div><a class="smallLink" target="_blank" rel="noopener" href="https://disneyworld.disney.go.com/faq/parks/height-requirements/">Official Disney height requirements ↗</a></div><div class="panel"><h3>Important limitations</h3><p class="muted">Dining data depends on provider coverage. Reservation searches and Lightning Lane booking open external services. AI requires a configured server endpoint, or use the explicit ChatGPT handoff. Charts show actual posted waits and locally collected observations, not predictions. California height rules are unverified until a park-specific source is connected. If loaded from a local file, browser storage or network access may be restricted. For reliable iPhone Home Screen behavior, serve this app from an HTTPS website.</p><button class="btn" style="color:#ffd5d5" onclick="clearData()">Erase local data</button></div><p class="foot">Independent, unofficial project. Not affiliated with or endorsed by Disney. Disney and attraction names belong to their owners. Do not rely on this app for safety-critical ride eligibility.</p>`}
+// Device coordinates are held in memory only. Test starts are reset on park changes.
+const PARK_CENTERS={mk:[28.4187,-81.5812],ep:[28.3747,-81.5494],hs:[28.3575,-81.5583],ak:[28.3553,-81.5900],dl:[33.8121,-117.9190],ca:[33.8062,-117.9209]};
+let parkMap=null, mapOrigin=null, mapDestination='', mapMessage='', locating=false, locationRequest=0;
+function resetMapLocation(){locationRequest++;mapOrigin=null;mapDestination='';mapMessage='';locating=false;}
+function placeCoordinates(place){const latitude=place?.location?.latitude,longitude=place?.location?.longitude;return typeof latitude==='number'&&typeof longitude==='number'&&Math.abs(latitude)<=90&&Math.abs(longitude)<=180?[latitude,longitude]:null;}
+function mapPlaces(){return (placeCatalog[state.park]||[]).filter(p=>['ATTRACTION','SHOW','RESTAURANT'].includes(p.entityType)&&placeCoordinates(p)).sort((a,b)=>a.name.localeCompare(b.name));}
+function viewMap(){
+ const places=mapPlaces(),destination=places.find(p=>p.id===mapDestination);
+ return `<div class="sectionhead"><h2>Park map & directions</h2></div>${parkSelect()}<div class="map-controls"><button class="btn primary" onclick="findDeviceLocation()" ${locating?'disabled':''}>${locating?'Finding your location…':'Find my current location'}</button><label for="mapStart">Or set my location in this park for testing</label><select id="mapStart" class="field" onchange="setTestLocation(this.value)"><option value="">Choose a test starting point…</option><option value="center" ${mapOrigin?.mode==='test'&&mapOrigin.id==='center'?'selected':''}>Approximate park center</option>${places.map(p=>`<option value="${ESC(p.id)}" ${mapOrigin?.mode==='test'&&mapOrigin.id===p.id?'selected':''}>${ESC(p.name)}</option>`).join('')}</select><p class="tiny muted">You can also tap the map to set a test starting point. Blue marks your start, gold marks your destination. Device location requires browser permission.</p></div><div id="mapNotice" class="map-status note" role="status">${ESC(mapMessage||'Choose your current location or a test starting point.')}</div><div id="parkMap" aria-label="Interactive map of ${ESC(activePark().name)}"><p class="map-fallback">Loading map…</p></div><label for="mapDestination">Where would you like to go?</label><select id="mapDestination" class="field" onchange="mapDestination=this.value;render()"><option value="">Choose a ride or restaurant…</option>${places.map(p=>`<option value="${ESC(p.id)}" ${p.id===mapDestination?'selected':''}>${ESC(p.name)} · ${p.entityType==='RESTAURANT'?'Dining':'Attraction'}</option>`).join('')}</select>${!places.length?`<p class="note">${diningLoading[state.park]||loading?'Loading park locations…':'The location directory is unavailable. Refresh the park data to try again.'}</p>`:''}${walkingLink(destination)}<p class="foot">Walking directions open Google Maps with your selected starting point and destination. Follow park signs and Cast Member instructions. Map data may omit restricted paths or temporary closures. Approximate park centers are test locations.</p><button class="btn" onclick="resetMapLocation();render()">Clear location</button>`;
+}
+function walkingLink(destination){
+ if(!destination||!mapOrigin)return '<p class="tiny muted">Select a starting point and destination to enable walking directions.</p>';
+ const coords=placeCoordinates(destination),params=new URLSearchParams({api:'1',origin:mapOrigin.coords.join(','),destination:coords.join(','),travelmode:'walking'});
+ return `<a class="btn primary wide" href="https://www.google.com/maps/dir/?${ESC(params.toString())}" target="_blank" rel="noopener">Walking directions to ${ESC(destination.name)} ↗</a><p class="map-coordinate">Start · ${ESC(mapOrigin.label)}${mapOrigin.mode==='test'?' · TEST LOCATION':''}</p>`;
+}
+function setTestLocation(id){
+ const p=mapPlaces().find(p=>p.id===id),coords=id==='center'?PARK_CENTERS[state.park]:placeCoordinates(p);
+ if(!coords)return;
+ locationRequest++;locating=false;mapOrigin={id,coords,mode:'test',label:id==='center'?'Approximate park center':p.name};mapMessage='Test location set to '+mapOrigin.label+'. Your actual device location is not being used.';render();
+}
+function findDeviceLocation(){
+ if(!navigator.geolocation){mapMessage='Location is unavailable in this browser. Select a test starting point instead.';return render();}
+ const request=++locationRequest;locating=true;mapMessage='Waiting for device location permission…';render();
+ navigator.geolocation.getCurrentPosition(position=>{
+  if(request!==locationRequest)return;
+  locating=false;mapOrigin={coords:[position.coords.latitude,position.coords.longitude],mode:'device',label:'Current device location',accuracy:position.coords.accuracy};
+  const center=PARK_CENTERS[state.park],far=Math.abs(center[0]-mapOrigin.coords[0])>.04||Math.abs(center[1]-mapOrigin.coords[1])>.04;
+  mapMessage='Using device location (approximately ±'+Math.round(position.coords.accuracy)+' m).'+(far?' You appear outside the selected park. Choose a test starting point to try in-park directions.':'');if(tab==='map')render();
+ },error=>{if(request!==locationRequest)return;locating=false;mapMessage=error.code===1?'Location permission was denied. Allow location in browser settings or choose a test starting point.':error.code===3?'Location request timed out. Try again or use a test starting point.':'Device location could not be determined. Choose a test starting point.';if(tab==='map')render();},{enableHighAccuracy:true,timeout:15000,maximumAge:30000});
+}
+function mountParkMap(){
+ if(tab!=='map'||!byId('parkMap'))return;
+ if(parkMap){parkMap.remove();parkMap=null;}
+ if(!window.L){byId('parkMap').innerHTML='<p class="map-fallback">The interactive map could not load. Starting-point selectors and external walking directions are still available when location data has loaded.</p>';return;}
+ byId('parkMap').replaceChildren();
+ const center=PARK_CENTERS[state.park];parkMap=L.map('parkMap',{scrollWheelZoom:false}).setView(center,16);
+ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(parkMap);
+ const destination=mapPlaces().find(p=>p.id===mapDestination);
+ for(const p of mapPlaces()){
+  const selected=p.id===mapDestination;
+  const marker=L.circleMarker(placeCoordinates(p),{bubblingMouseEvents:false,radius:selected?9:5,color:selected?'#ffd35a':'#2155e8',fillColor:selected?'#ffd35a':'#2155e8',fillOpacity:.8}).addTo(parkMap);
+  marker.bindPopup(`<strong>${ESC(p.name)}</strong><p><button onclick='mapDestination=${safeId(p.id)};render()'>Directions here</button></p>`);
+ }
+ if(mapOrigin){L.circleMarker(mapOrigin.coords,{radius:10,color:'#fff',weight:3,fillColor:'#2155e8',fillOpacity:1}).addTo(parkMap).bindPopup(ESC(mapOrigin.label));if(mapOrigin.mode==='device'&&mapOrigin.accuracy<3000)L.circle(mapOrigin.coords,{radius:mapOrigin.accuracy,color:'#2155e8',weight:1,fillOpacity:.08}).addTo(parkMap);}
+ if(mapOrigin&&destination)parkMap.fitBounds([mapOrigin.coords,placeCoordinates(destination)],{padding:[30,30],maxZoom:17});else if(mapOrigin&&mapOrigin.mode==='test')parkMap.setView(mapOrigin.coords,17);
+ parkMap.on('click',event=>{locationRequest++;locating=false;mapOrigin={coords:[event.latlng.lat,event.latlng.lng],mode:'test',id:'custom',label:'Selected map point'};mapMessage='Test location set to your selected map point.';render();});
+}
+
+function primaryTab(t){return ['rides','dining'].includes(t)?'explore':['family','charts','ask','links','settings'].includes(t)?'more':t;}
+function updateNavigation(){
+ const active=primaryTab(tab);
+ document.querySelectorAll('.nav').forEach(button=>{const selected=button.dataset.tab===active;button.classList.toggle('active',selected);if(selected)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');});
+}
+function installNavigation(){
+ ICONS.map='M9 4 3 2v17l6 3 6-3 6 3V5l-6-3-6 2Zm0 0v18m6-20v17';
+ ICONS.more='M4 12h.01M12 12h.01M20 12h.01';
+ document.querySelector('.navbar').innerHTML=[['today','Today','home'],['explore','Explore','coaster'],['map','Map','map'],['plan','My Plan','calendar'],['more','More','more']].map(([key,label,symbol])=>`<button class="nav" data-tab="${key}" onclick="go('${key}')">${icon(symbol)}<span>${label}</span></button>`).join('');
+ updateNavigation();
+}
+let exploreTab='rides';
+const tabScroll={};
+const ROUTES=['today','rides','dining','map','plan','more','family','charts','ask','links','settings'];
+function restoreRoute(){const route=location.hash.slice(1);if(ROUTES.includes(route)&&route!==tab)go(route,false);}
+let navigationAnimation=null;
+let keyboardNavigation=false;
+function animateNavigation(){
+ if(keyboardNavigation||matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+ navigationAnimation?.cancel();
+ navigationAnimation=byId('app').animate([{opacity:.55,transform:'translateY(4px)'},{opacity:1,transform:'translateY(0)'}],{duration:150,easing:'cubic-bezier(.22,1,.36,1)'});
+}
+function viewMore(){return `<div class="sectionhead"><div><span class="eyebrow">A little more magic</span><h1 class="screen-title">Your park tools</h1></div></div><p class="muted">Keep your family close and your plans effortless.</p><div class="tools-list">${[['family','people','Family & heights','Rider profiles and eligibility'],['charts','clock','Park insights','Posted waits and operating status'],['links','next','Useful links','Disney resources and planning services'],['ask','star','Ask ParkPilot','Local data checker and AI connection'],['settings','settings','Settings & privacy','Backups, saved data and app information']].map(([key,symbol,label,note])=>`<button class="tool-row" onclick="go('${key}')"><span class="tool-symbol">${icon(symbol)}</span><span><strong>${label}</strong><small>${note}</small></span>${icon('next')}</button>`).join('')}</div><div class="more-signoff">${icon('castle')}<span>A little planning. A lot of wonder.</span></div>`;}
+function openDetails(id,kind='ride'){
+ document.querySelector('#attractionSheet')?.close();
+ const item=kind==='dining'?diningRows().find(r=>r.id===id):live.find(r=>r.id===id);
+ if(!item)return;
+ const previousOverflow=document.body.style.overflow;
+ const dialog=document.createElement('dialog');dialog.id='attractionSheet';dialog.className='detail-sheet'+(keyboardNavigation?'':' motion-enabled');dialog.setAttribute('aria-labelledby','detailTitle');
+ const photo=photos[id],hasPhoto=photo&&/^https:\/\//.test(photo.url)&&/^https:\/\/commons\.wikimedia\.org\//.test(photo.source);
+ const art=hasPhoto?`<img src="${ESC(photo.url)}" alt="${ESC(item.name)}"><a class="photo-credit" href="${ESC(photo.source)}" target="_blank" rel="noopener">${ESC(photo.artist)} · ${ESC(photo.license)} ↗</a>`:`<div class="sheet-illustration">${icon(kind==='dining'?'star':'coaster')}<span>${kind==='dining'?'A delicious detour':'Your next adventure'}</span></div>`;
+ const coordinates=placeCoordinates((placeCatalog[state.park]||[]).find(p=>p.id===id));
+ const matching=kind==='ride'?eligible(item,state.people.filter(p=>p.selected).map(p=>Number(p.height))):false;
+ dialog.innerHTML=`<div class="sheet-grabber" aria-hidden="true"></div><div class="sheet-toolbar"><span class="eyebrow">${ESC(activePark().name)}</span><button class="iconbtn" aria-label="Close attraction details" autofocus onclick="closeDetails()">×</button></div><div class="sheet-art">${art}</div><div class="sheet-content"><h2 id="detailTitle">${ESC(item.name)}</h2><p class="muted">${kind==='dining'?'Dining':ESC(item.type)}${item.land?' · '+ESC(item.land):''}</p>${kind==='ride'?`<div class="detail-metrics"><div><b>${item.wait===null?'—':item.wait+' min'}</b><span>Posted standby wait</span></div><div><b>${item.height===null?'Unverified':item.height===0?'No minimum':item.height+'″'}</b><span>Listed height rule</span></div></div><p class="tag ${matching?'good':'warn'}">${matching?'All selected riders meet the listed height':item.height===null?'Check official height requirements':'Review your selected rider heights'}</p><p class="tiny muted">${ESC(item.status.replaceAll('_',' '))} · ${item.updated?'Updated '+ESC(hours(item.updated)):'Update time unavailable'}</p><div class="sheet-actions"><button id="detailSave" class="btn ${state.favorites.includes(id)?'on':''}" aria-pressed="${state.favorites.includes(id)}" onclick='toggleDetail("favorites",${safeId(id)})'>${state.favorites.includes(id)?'Saved favorite':'Save favorite'}</button><button id="detailPlan" class="btn primary" aria-pressed="${state.plan.includes(id)}" onclick='toggleDetail("plan",${safeId(id)})'>${state.plan.includes(id)?'Remove from My Plan':'Add to My Plan'}</button></div>`:`<p class="note">${ESC(item.status||'Operating status unavailable')}. Search Disney dining to confirm reservations for your date and party size.</p><a class="btn primary wide" href="${diningUrl()}" target="_blank" rel="noopener">Check dining times ↗</a>`}${coordinates?`<button class="btn wide" onclick='detailsToMap(${safeId(id)})'>${icon('map')} Show on park map</button>`:''}<p class="foot">${kind==='ride'?'Confirm height and safety requirements with the park. Posted waits can change.':'Reservation availability depends on Disney and provider coverage.'}</p></div>`;
+ dialog.addEventListener('close',()=>{document.body.style.overflow=previousOverflow;dialog.remove();document.querySelector('.nav.active')?.focus({preventScroll:true});},{once:true});
+ dialog.addEventListener('click',e=>{if(e.target===dialog){const b=dialog.getBoundingClientRect();if(e.clientY<b.top||e.clientX<b.left||e.clientX>b.right||e.clientY>b.bottom)closeDetails();}});
+ document.body.append(dialog);document.body.style.overflow='hidden';dialog.showModal();
+}
+function closeDetails(){const dialog=byId('attractionSheet');if(!dialog||dialog.dataset.closing)return;dialog.dataset.closing='true';if(keyboardNavigation||matchMedia('(prefers-reduced-motion: reduce)').matches)return dialog.close();const animation=dialog.animate([{transform:'translateY(0)',opacity:1},{transform:'translateY(24px)',opacity:0}],{duration:130,easing:'ease-in'});animation.onfinish=()=>dialog.close();}
+function toggleDetail(type,id){doSet(type,id);const button=byId(type==='plan'?'detailPlan':'detailSave'),selected=state[type].includes(id);if(button){button.setAttribute('aria-pressed',selected);button.classList.toggle('on',selected&&type==='favorites');button.textContent=type==='plan'?(selected?'Remove from My Plan':'Add to My Plan'):(selected?'Saved favorite':'Save favorite');}notify(type==='plan'?(selected?'Added to My Plan':'Removed from My Plan'):(selected?'Favorite saved':'Favorite removed'));}
+function detailsToMap(id){byId('attractionSheet')?.close();mapDestination=id;go('map');}
+
+function render(){const views={today:viewToday,rides:viewRides,plan:viewPlan,family:viewFamily,settings:viewSettings,more:viewMore,map:viewMap,dining:viewDining,charts:viewCharts,ask:viewAsk,links:viewLinks};byId('app').innerHTML=extraNavigation()+(views[tab]||viewToday)();if(tab==='map')requestAnimationFrame(mountParkMap);}
+// Expansion data is separate from the existing family and itinerary schema.
+const placeCatalog={}, diningLive={}, diningCatalog={}, diningErrors={}, diningLoading={}, snapshots={};
+let diningQuery='', questionDraft='', answerText='', aiBusy=false, photoSelection=null;
+let photos={}, aiEndpoint='';
+try{photos=JSON.parse(localStorage.getItem('parkpilot_photos_v1')||'{}');if(!photos||Array.isArray(photos)||typeof photos!=='object')photos={};aiEndpoint=localStorage.getItem('parkpilot_ai_endpoint')||'';}catch{}
+const activePark=()=>PARKS.find(p=>p.key===state.park);
+const resortName=()=>['dl','ca'].includes(state.park)?'Disneyland Resort':'Walt Disney World';
+const diningUrl=()=>['dl','ca'].includes(state.park)?'https://disneyland.disney.go.com/dining/':'https://disneyworld.disney.go.com/dining/';
+function extraNavigation(){
+ if(['rides','dining'].includes(tab))return `<div class="segmented" role="group" aria-label="Explore attractions and dining"><button class="segment" aria-pressed="${tab==='rides'}" onclick="go('rides')">Rides</button><button class="segment" aria-pressed="${tab==='dining'}" onclick="go('dining')">Dining</button></div>`;
+ if(['family','charts','ask','links','settings'].includes(tab))return `<button class="back-tool" onclick="go('more')">${icon('next')} All park tools</button>`;
+ return '';
+}
+function recordSnapshot(key,rides){
+ const numeric=rides.filter(r=>r.status==='OPERATING'&&r.wait!==null);
+ const points=snapshots[key]||[];
+ points.push({time:new Date().toISOString(),average:numeric.length?Math.round(numeric.reduce((sum,r)=>sum+r.wait,0)/numeric.length):null,count:numeric.length});
+ snapshots[key]=points.slice(-60);
+}
+async function loadDining(key,id){
+ if(diningCatalog[key]||diningLoading[key])return;
+ diningLoading[key]=true;diningErrors[key]='';
+ try{
+  const response=await fetch(`${API}/entity/${encodeURIComponent(id)}/children`);
+  if(!response.ok)throw Error('Dining directory unavailable');
+  const json=await response.json();if(!Array.isArray(json.children))throw Error('Invalid dining directory');
+  placeCatalog[key]=json.children;diningCatalog[key]=json.children.filter(e=>e.entityType==='RESTAURANT');
+ }catch(e){diningErrors[key]=e.message;}
+ finally{diningLoading[key]=false;if(['dining','map'].includes(tab)&&state.park===key)render();}
+}
+function diningRows(){
+ const key=state.park, rows=new Map();
+ for(const r of diningCatalog[key]||[])rows.set(r.id,{...r});
+ for(const r of diningLive[key]||[])rows.set(r.id,{...rows.get(r.id),...r});
+ return [...rows.values()].filter(r=>normalize(r.name).includes(normalize(diningQuery))).sort((a,b)=>a.name.localeCompare(b.name));
+}
+function diningCard(r){
+ const reported=(diningLive[state.park]||[]).find(e=>e.id===r.id);
+ const availability=Array.isArray(reported?.diningAvailability)?reported.diningAvailability:[];
+ const supplied=availability.filter(a=>Number.isFinite(a.waitTime)&&a.waitTime>=0);
+ return `<article class="ride">${photoBlock(r.id,r.name)}<h3><button class="card-title" onclick='openDetails(${safeId(r.id)},"dining")'>${ESC(r.name)}${icon('next')}</button></h3><p class="tiny muted">${ESC(activePark().name)}</p><span class="tag ${reported?.status==='OPERATING'?'good':''}">${reported?.status?ESC(reported.status.replaceAll('_',' ')):'Operating status unavailable'}</span>
+ <p>${supplied.length?supplied.map(a=>`<span class="tag good">${a.waitTime} min reported wait${Number.isFinite(a.partySize)?' · party of '+a.partySize:''}</span>`).join(''):'Current dining availability not supplied for this venue.'}</p>
+ <p class="tiny muted">${reported?.lastUpdated?'Provider updated '+ESC(hours(reported.lastUpdated))+'. ':''}Reported waits do not confirm a reservation for your date and party.</p><a class="btn" href="${diningUrl()}" target="_blank" rel="noopener">Search Disney dining times ↗</a></article>`;
+}
+function viewDining(){const rows=diningRows();return `<div class="sectionhead"><h2>Dining & availability</h2><span class="tiny muted">${rows.length} venues</span></div>${parkSelect()}${status()}<div class="note">Browse restaurants in the selected park. Open Disney dining to choose a date, meal, and party size and confirm bookable tables. Provider coverage varies.</div><label for="diningSearch">Find a restaurant</label><input id="diningSearch" class="field" value="${ESC(diningQuery)}" oninput="diningQuery=this.value;renderDiningResults()" placeholder="Restaurant name…"><div id="diningResults">${diningResultHTML()}</div><p class="foot">${diningErrors[state.park]?ESC(diningErrors[state.park])+' · ':''}<a href="https://www.themeparks.wiki/api" target="_blank" rel="noopener">Powered by ThemeParks.wiki</a></p>`;}
+function diningResultHTML(){const rows=diningRows();return rows.length?`<div class="rides">${rows.map(diningCard).join('')}</div>`:`<div class="empty">${loading||diningLoading[state.park]?'Loading restaurant directory…':'No matching restaurant data is available. Use Disney dining to search the full resort.'}<p><a href="${diningUrl()}" target="_blank" rel="noopener">Open official dining search ↗</a></p></div>`;}
+function renderDiningResults(){byId('diningResults').innerHTML=diningResultHTML();}
+function viewCharts(){
+ const rides=dataPark===state.park?live:[],numeric=rides.filter(r=>r.status==='OPERATING'&&r.wait!==null).sort((a,b)=>b.wait-a.wait);
+ const maximum=Math.max(1,...numeric.map(r=>r.wait));
+ const points=(snapshots[state.park]||[]).filter(p=>p.average!==null);
+ const maxAverage=Math.max(1,...points.map(p=>p.average));
+ const coords=points.map((p,i)=>`${20+i*560/Math.max(1,points.length-1)},${150-p.average/maxAverage*120}`).join(' ');
+ return `<div class="sectionhead"><h2>Park insights</h2></div>${parkSelect()}${status()}<section class="panel"><h3>Posted standby waits</h3><p class="tiny muted">Operating attractions with numeric waits only. Minutes, as last fetched.</p>${numeric.length?numeric.map(r=>`<div class="chart-row"><span>${ESC(r.name)}</span><div class="chart-track"><div class="chart-bar" style="width:${r.wait/maximum*100}%"></div></div><strong>${r.wait} min</strong></div>`).join(''):'<div class="empty">No numeric posted waits available for this snapshot.</div>'}</section>
+ <section class="panel" style="margin-top:12px"><h3>Operating status</h3>${['OPERATING','CLOSED','DOWN','REFURBISHMENT'].map(status=>{const count=rides.filter(r=>r.status===status).length;return `<div class="chart-row"><span>${status.toLowerCase()}</span><div class="chart-track"><div class="chart-bar" style="width:${rides.length?count/rides.length*100:0}%"></div></div><strong>${count}</strong></div>`;}).join('')}<p class="tiny muted">${rides.length} attractions in the current feed. Missing entries are not assumed closed.</p></section>
+ <section class="panel" style="margin-top:12px"><h3>Average wait over this session</h3>${points.length>1?`<svg class="trend" viewBox="0 0 600 190" role="img" aria-label="Average posted wait observations, ${points.length} points, maximum ${maxAverage} minutes"><path d="M20 20v130h560" fill="none" stroke="#aabbd8"/><polyline points="${coords}" fill="none" stroke="#b59aff" stroke-width="3"/><text x="25" y="185" fill="#aabbd8" font-size="12">${ESC(hours(points[0].time))}</text><text x="490" y="185" fill="#aabbd8" font-size="12">${ESC(hours(points.at(-1).time))}</text></svg><details><summary>Observation data</summary>${points.map(p=>`<p class="tiny">${ESC(hours(p.time))} · ${p.average} min · ${p.count} attractions</p>`).join('')}</details>`:'<p class="muted">Collect at least two numeric snapshots by refreshing at least a minute apart. Observations stay in this open session.</p>'}<p class="tiny muted">Historical observations only. No forecast or fabricated crowd score.</p></section><p class="foot"><a href="https://www.themeparks.wiki/api" target="_blank" rel="noopener">Powered by ThemeParks.wiki</a></p>`;
+}
+function photoBlock(id,name){
+ const photo=photos[id];
+ if(photo&&/^https:\/\//.test(photo.url)&&/^https:\/\/commons\.wikimedia\.org\//.test(photo.source))return `<figure class="venue-photo"><img loading="lazy" src="${ESC(photo.url)}" alt="${ESC(name)}" onerror="this.hidden=true"><figcaption><a href="${ESC(photo.source)}" target="_blank" rel="noopener">${ESC(photo.title)}</a> · ${ESC(photo.artist)} · ${ESC(photo.license)}</figcaption></figure><button class="miniBtn photo-tools" onclick='choosePhoto(${safeId(id)},${safeId(name)})'>Change photo</button>`;
+ return `<div class="card-art" aria-label="Decorative park artwork">${icon('star')}<span>Discover the magic</span></div><button class="miniBtn photo-tools" onclick='choosePhoto(${safeId(id)},${safeId(name)})'>Find a photo</button>`;
+}
+function plainHTML(value){const documentValue=new DOMParser().parseFromString(value||'','text/html');return documentValue.body.textContent||'';}
+async function choosePhoto(id,name){
+ photoSelection={id,name,candidates:[]};
+ const host=document.createElement('dialog');host.id='photoPicker';host.className='panel';host.style.cssText='max-width:550px;width:calc(100% - 28px);max-height:85vh;overflow:auto;color:var(--text)';
+ host.innerHTML='<button class="miniBtn" onclick="this.closest(\'dialog\').remove()">Close</button><h2>Choose a matching photo</h2><p>Loading Wikimedia Commons photos…</p>';document.body.append(host);host.showModal();
+ try{
+  const query=new URLSearchParams({action:'query',format:'json',origin:'*',generator:'search',gsrsearch:name+' '+resortName()+' filetype:bitmap',gsrnamespace:'6',gsrlimit:'4',prop:'imageinfo',iiprop:'url|extmetadata',iiurlwidth:'640'});
+  const response=await fetch('https://commons.wikimedia.org/w/api.php?'+query);if(!response.ok)throw Error('Photo search unavailable');
+  const data=await response.json();
+  photoSelection.candidates=Object.values(data.query?.pages||{}).map(p=>{const i=p.imageinfo?.[0],m=i?.extmetadata;return i?{url:i.thumburl||i.url,source:i.descriptionurl,title:p.title.replace(/^File:/,''),artist:plainHTML(m?.Artist?.value),license:plainHTML(m?.LicenseShortName?.value)}:null;}).filter(p=>p&&p.license&&/^https:\/\//.test(p.url));
+  if(!host.isConnected)return;
+  host.innerHTML=`<button class="miniBtn" onclick="this.closest('dialog').remove()">Close</button><h2>Photo for ${ESC(name)}</h2><p class="tiny muted">Search results may depict a different location. Select only a matching photo. Attribution is saved with it.</p><div class="photo-options">${photoSelection.candidates.map((p,i)=>`<div class="photo-candidate"><img src="${ESC(p.url)}" alt="${ESC(p.title)}"><p class="tiny">${ESC(p.title)} · ${ESC(p.artist)} · ${ESC(p.license)}</p><a href="${ESC(p.source)}" target="_blank" rel="noopener">Source & license ↗</a> <button class="miniBtn" onclick="savePhoto(${i})">Use this photo</button></div>`).join('')||'<p>No photos found. Try another venue later.</p>'}</div>`;
+ }catch(e){if(host.isConnected)host.innerHTML='<button class="miniBtn" onclick="this.closest(\'dialog\').remove()">Close</button><p>Photo search is unavailable. Please try again later.</p>';}
+}
+function savePhoto(index){const p=photoSelection?.candidates[index];if(!p)return;photos[photoSelection.id]=p;try{localStorage.setItem('parkpilot_photos_v1',JSON.stringify(photos));}catch{notify('Photo could not be saved');return;}byId('photoPicker')?.remove();render();}
+function viewAsk(){return `<div class="sectionhead"><h2>Ask ParkPilot</h2></div><div class="panel"><p class="muted">Ask about your current park, family eligibility, dining, or itinerary. Connected AI uses the server endpoint you configure below.</p><label for="question">Your question</label><textarea id="question" class="field" rows="4" oninput="questionDraft=this.value" placeholder="Which rides can all selected riders enjoy?">${ESC(questionDraft)}</textarea><div class="chat-actions"><button class="btn primary" onclick="askConnectedAI()" ${aiBusy?'disabled':''}>${aiBusy?'Asking…':'Ask connected AI'}</button><button class="btn" onclick="localAnswer()">Check current park data</button><button class="btn" onclick="openChatGPT()">Copy context & open ChatGPT ↗</button></div><div id="answer" class="answer" role="status">${ESC(answerText)}</div></div><details class="advanced"><summary>AI connection settings</summary><p class="tiny muted">A server-side HTTPS endpoint must accept POST {question, context} and return {answer}. Keep provider API keys on that server. Connecting sends the question, selected rider heights (no names), and current park data to your configured endpoint.</p><label for="aiEndpoint">Your server endpoint</label><input id="aiEndpoint" class="field" type="url" value="${ESC(aiEndpoint)}" placeholder="https://your-server.example/ask"><button class="btn wide" onclick="setAIEndpoint()">Save endpoint</button></details><p class="foot">The local data checker uses fixed rules. It is not a language model. AI setup requires a separately hosted server and provider account.</p>`;}
+function assistantContext(){return {park:activePark().name,resort:resortName(),fetchedAt:dataPark===state.park?lastFetch?.toISOString():null,selectedHeights:state.people.filter(p=>p.selected).map(p=>Number(p.height)),maximumWait:state.maxWait,attractions:dataPark===state.park?live.map(r=>({name:r.name,status:r.status,wait:r.wait,height:r.height})):[],plan:state.plan.map(id=>live.find(r=>r.id===id)?.name||'Saved attraction outside current park'),dining:diningRows().map(r=>({name:r.name,status:r.status||null,diningAvailability:r.diningAvailability||null}))};}
+function setAIEndpoint(){const value=byId('aiEndpoint').value.trim();try{if(value&&new URL(value).protocol!=='https:')throw Error();aiEndpoint=value;localStorage.setItem('parkpilot_ai_endpoint',value);notify('AI endpoint saved');}catch{notify('Enter a valid HTTPS endpoint');}}
+async function askConnectedAI(){
+ if(aiBusy)return;if(!questionDraft.trim()){answerText='Enter a question first.';return render();}
+ if(!aiEndpoint){answerText='Connect a server endpoint in AI connection settings, or use Copy context & open ChatGPT.';return render();}
+ if(!confirm('Send your question, selected rider heights, park data and itinerary to '+new URL(aiEndpoint).origin+'?'))return;
+ aiBusy=true;render();
+ try{const response=await fetch(aiEndpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:questionDraft,context:assistantContext()}),signal:AbortSignal.timeout(30000)});if(!response.ok)throw Error('AI server returned '+response.status);const data=await response.json();if(typeof data.answer!=='string')throw Error('AI response missing answer');answerText=data.answer;}catch(e){answerText='Unable to reach connected AI. '+e.message;}finally{aiBusy=false;render();}
+}
+function localAnswer(){const q=normalize(questionDraft),context=assistantContext();if(/dining|restaurant|food|eat/.test(q))answerText=diningRows().slice(0,8).map(r=>r.name).join('\n')||'Dining data has not loaded. Open Dining to browse venues and check Disney availability.';else if(/plan|itinerary/.test(q))answerText=context.plan.join('\n')||'Your itinerary is empty.';else{const matches=(dataPark===state.park?live:[]).filter(r=>r.status==='OPERATING'&&eligible(r,context.selectedHeights)).sort((a,b)=>(a.wait??9999)-(b.wait??9999));answerText=matches.length?matches.slice(0,10).map(r=>r.name+' · '+(r.wait===null?'No posted wait':r.wait+' min')).join('\n'):'No verified all-family operating matches in the current data. Unknown height rules are excluded.';}answerText='Local data check · '+activePark().name+'\n'+answerText;render();}
+async function openChatGPT(){try{await navigator.clipboard.writeText('Help plan my Disney park visit. Use the supplied data as a timestamped snapshot, do not invent waits or reservation availability. Question: '+questionDraft+'\n'+JSON.stringify(assistantContext(),null,2));answerText='Context copied. Open ChatGPT below and paste it to ask your question.';}catch{answerText='Clipboard unavailable. Ask your question directly in ChatGPT.';}render();const a=document.createElement('a');a.className='btn wide';a.href='https://chatgpt.com/';a.target='_blank';a.rel='noopener';a.textContent='Open ChatGPT ↗';byId('answer').append(a);}
+function viewLinks(){const links=[['Disney dining search',diningUrl(),'Choose date, party size, and confirm available reservation times.'],['Walt Disney World','https://disneyworld.disney.go.com/','Official park information, tickets and My Disney Experience.'],['Disneyland Resort','https://disneyland.disney.go.com/','Official California resort information and planning.'],['Evercay','https://evercay.com/lightning-lane-management/','External Lightning Lane concierge service. Separate account and terms.'],['Standby Skipper','https://www.standbyskipper.com/','External Lightning Lane planning service. Separate purchase and setup.'],['SupaPark','https://apps.apple.com/us/app/supapark-ai-for-disney-world/id6799537158','External Disney planning app with AI features.'],['ThemeParks.wiki','https://www.themeparks.wiki/api','ParkPilot live-data provider.']];return `<div class="sectionhead"><h2>Useful links</h2></div><p class="muted">Official resources and the services you liked. Availability, pricing and booking are handled by each provider.</p>${links.map(([name,url,description])=>`<a class="link-card" href="${url}" target="_blank" rel="noopener"><strong>${ESC(name)} ↗</strong><span class="tiny muted">${ESC(description)}</span></a>`).join('')}`;}
+
+document.addEventListener('keydown',()=>{keyboardNavigation=true;});
+document.addEventListener('pointerdown',()=>{keyboardNavigation=false;});
+const initialRoute=location.hash.slice(1);
+if(ROUTES.includes(initialRoute)){tab=initialRoute;if(['rides','dining'].includes(tab))exploreTab=tab;}
+window.addEventListener('popstate',restoreRoute);
+window.addEventListener('hashchange',restoreRoute);
+installNavigation();
+document.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));
+window.addEventListener('load',()=>{if(tab==='map')mountParkMap()});
+render();getLive();if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
