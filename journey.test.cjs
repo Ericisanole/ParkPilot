@@ -87,6 +87,16 @@ test('Passport notes are escaped before rendering', () => {
 });
 test('The offline asset graph includes both journey files', () => {
   const index = fs.readFileSync(root + '/index.html', 'utf8'), worker = fs.readFileSync(root + '/sw.js', 'utf8');
-  assert.ok(index.indexOf('journey.js?v=journey1') < index.indexOf('app.js?v=journey1'));
-  assert.ok(worker.includes('journey.js?v=journey1') && worker.includes('journey.css?v=journey1'));
+  assert.ok(index.indexOf('journey.js?v=journey2') < index.indexOf('app.js?v=journey2'));
+  assert.ok(worker.includes('journey.js?v=journey2') && worker.includes('journey.css?v=journey2'));
+});
+test('Break resources remain available without community data and never invent pins', () => {
+  for (const park of ['mk','ep','hs','ak','dl','ca']) {
+    run(`state.park='${park}';breakCategory='all'`);
+    const html=run('officialBreakDirectory()');
+    assert.match(html,/Baby Care Center/);
+    assert.match(html,/maps\/search/);
+    assert.doesNotMatch(html,/maps\/dir/);
+    assert.match(html,park==='dl'||park==='ca'?/baby-center-lost-children/:/baby-care-centers/);
+  }
 });
