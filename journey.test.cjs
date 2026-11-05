@@ -10,7 +10,7 @@ beforeEach(() => {
   context = vm.createContext({crypto: require('node:crypto').webcrypto, URLSearchParams, Date, Intl,
     localStorage: {getItem: () => null, setItem: () => {}}, window: {},
     document: {getElementById: id => elements[id] || null, querySelectorAll: () => []}});
-  for (const name of ['height-requirements.js', 'journey.js']) vm.runInContext(fs.readFileSync(root + '/' + name, 'utf8'), context);
+  for (const name of ['venue-images.js', 'height-requirements.js', 'journey.js']) vm.runInContext(fs.readFileSync(root + '/' + name, 'utf8'), context);
   const source = fs.readFileSync(root + '/app.js', 'utf8');
   vm.runInContext(source.slice(0, source.indexOf("document.addEventListener('keydown'")), context);
   run(`render=()=>{};state.park='mk';state.journey.date='2026-11-05';state.people=[{id:'adultA',name:'Adult A',height:70,selected:true},{id:'adultB',name:'Adult B',height:65,selected:true},{id:'childA',name:'Child A',height:44,selected:true},{id:'childB',name:'Child B',height:34,selected:false}];state.done=[];state.plan=[];dataPark='mk';live=[makeRide({id:'pirates',name:'Pirates of the Caribbean',status:'OPERATING',queue:{STANDBY:{waitTime:10}}},'mk'),makeRide({id:'space',name:'Space Mountain',status:'OPERATING',queue:{STANDBY:{waitTime:20}}},'mk')];`);
@@ -87,7 +87,7 @@ test('Passport notes are escaped before rendering', () => {
 });
 test('The offline asset graph includes both journey files', () => {
   const index = fs.readFileSync(root + '/index.html', 'utf8'), worker = fs.readFileSync(root + '/sw.js', 'utf8');
-  assert.ok(index.indexOf('journey.js?v=journey2') < index.indexOf('app.js?v=journey2'));
+  assert.ok(index.indexOf('journey.js?v=journey2') < index.indexOf('app.js?v=photos1'));
   assert.ok(worker.includes('journey.js?v=journey2') && worker.includes('journey.css?v=journey2'));
 });
 test('Break resources remain available without community data and never invent pins', () => {
