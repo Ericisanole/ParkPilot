@@ -113,7 +113,7 @@ const DEFAULT={park:'mk',people:[{name:'Adult 1',height:70,selected:true},{name:
 let saved={};try{saved=JSON.parse(localStorage.getItem(STORE)||'{}')||{}}catch{}let state={...DEFAULT,...saved},tab='today',live=[],lastFetch=null,err='',loading=false,search='',parkIds={},dataPark='',lastSyncByPark={},notice='';
 const ESC=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const byId=id=>document.getElementById(id);const save=()=>{try{localStorage.setItem(STORE,JSON.stringify(state))}catch(e){notify('Storage unavailable: export your backup')}};
-const change=(key,value)=>{state[key]=value;save();render()};
+const change=(key,value)=>{state[key]=value;save();render();if(key==='park')getLive()};
 const doSet=(type,id)=>{let list=state[type]||[];state[type]=list.includes(id)?list.filter(x=>x!==id):[...list,id];save();render()};
 const safeId=id=>ESC(JSON.stringify(String(id)));
 function notify(s){let el=byId('toast');el.textContent=s;el.classList.remove('hidden');clearTimeout(notify.timer);notify.timer=setTimeout(()=>el.classList.add('hidden'),2500)}
