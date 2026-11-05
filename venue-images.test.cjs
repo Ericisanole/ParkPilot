@@ -32,7 +32,7 @@ test('Every bundled crop has a valid local collection, source, creator, license 
 });
 test('Offline app graph loads the image module before rendering and exposes permanent credits',()=>{
  const index=fs.readFileSync(__dirname+'/index.html','utf8'),sw=fs.readFileSync(__dirname+'/sw.js','utf8'),app=fs.readFileSync(__dirname+'/app.js','utf8');
- assert.ok(index.indexOf('venue-images.js?v=photos1')<index.indexOf('app.js?v=photos1'));
+ assert.ok(index.indexOf('venue-images.js?v=photos1')<index.indexOf('app.js?v=parkart1'));
  assert.match(sw,/venue-image-credits.html/);assert.match(sw,/venue-images.js\?v=photos1/);
  assert.doesNotMatch(app,/choosePhoto\(/);assert.doesNotMatch(app,/Find a photo/);
  assert.match(app,/const photo=photos\[id\]/);

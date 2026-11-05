@@ -87,7 +87,7 @@ test('Passport notes are escaped before rendering', () => {
 });
 test('The offline asset graph includes both journey files', () => {
   const index = fs.readFileSync(root + '/index.html', 'utf8'), worker = fs.readFileSync(root + '/sw.js', 'utf8');
-  assert.ok(index.indexOf('journey.js?v=journey2') < index.indexOf('app.js?v=photos1'));
+  assert.ok(index.indexOf('journey.js?v=journey2') < index.indexOf('app.js?v=parkart1'));
   assert.ok(worker.includes('journey.js?v=journey2') && worker.includes('journey.css?v=journey2'));
 });
 test('Break resources remain available without community data and never invent pins', () => {
