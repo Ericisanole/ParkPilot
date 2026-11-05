@@ -7,7 +7,8 @@ const root = __dirname;
 const source = fs.readFileSync(root + '/app.js', 'utf8');
 const startup = source.indexOf("document.addEventListener('keydown'");
 assert.ok(startup > 0, 'Locate the application startup before evaluating pure rules');
-const context = vm.createContext({localStorage: {getItem: () => null}, window: {}});
+const context = vm.createContext({localStorage: {getItem: () => null}, window: {}, crypto: require('node:crypto').webcrypto});
+vm.runInContext(fs.readFileSync(root + '/journey.js', 'utf8'), context);
 vm.runInContext(fs.readFileSync(root + '/height-requirements.js', 'utf8'), context);
 vm.runInContext(source.slice(0, startup), context);
 
