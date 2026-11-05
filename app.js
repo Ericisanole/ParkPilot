@@ -67,7 +67,7 @@ function bestRide(){return (dataPark===state.park?live:[]).filter(r=>r.status===
 function status(){return `<div class="statusline tiny muted" role="status">${loading?'Updating live waits…':err?'Live data unavailable: '+ESC(err):dataPark===state.park&&lastFetch?'Live board fetched '+hours(lastFetch):'Live wait times not loaded'} ${!loading?'<button class="miniBtn" onclick="getLive(true)">↻ Refresh</button>':''}</div>${loading?'<div class="skeleton" aria-hidden="true"></div>':''}${err?'<div class="note">The app does not invent wait times. Check your connection and refresh. Saved preferences and plans remain on this device.</div>':''}`}
 function viewToday(){
   const ride=bestRide();
-  return `<section class="hero"><div><span class="eyebrow">${ESC(activePark().name)} · Your day awaits</span><h1>Make every park minute count.</h1></div></section>
+  return `<section class="hero"><div><span class="eyebrow">Your day, beautifully planned</span><h1>Make every park minute count.</h1></div></section>
   ${parkSelect()}<div class="day-context"><span>${state.people.filter(p=>p.selected).length} selected riders</span><strong>${state.plan.length} planned adventures</strong></div>${summary()}${status()}
   <div class="sectionhead"><h2>${icon('star')}Best move right now</h2></div>
   ${ride?`<article class="recommendation"><div class="thumb">${icon(ride.type==='Show'?'star':'coaster')}</div><div>
